@@ -8,6 +8,7 @@ import javax.ejb.Stateless;
 import javax.jws.WebMethod;
 import javax.jws.WebParam;
 import javax.jws.WebService;
+import javax.mail.MessagingException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -16,6 +17,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Timestamp;
 import java.util.Base64;
 
 import org.mindrot.jbcrypt.BCrypt;
@@ -28,6 +31,11 @@ import org.mindrot.jbcrypt.BCrypt;
 public class AuthenticationService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    private static final String EMAIL_VERIFICATION = "EMAIL_VERIFICATION";
+    private static final int CODE_VALIDITY_MINUTES = 5;
+    private static final int MAX_ATTEMPTS = 5;
+    private static final int RESEND_DELAY_SECONDS = 60;
 
     // REGISTER
     @WebMethod
@@ -44,28 +52,265 @@ public class AuthenticationService {
                     "Please provide valid information. Password must contain at least 8 characters.");
         }
 
-        String sql = "INSERT INTO users (full_name, email, password) VALUES (?, ?, ?)";
+        String normalizedEmail = email.trim().toLowerCase();
+        String code = generateVerificationCode();
+
+        String sql = "INSERT INTO users "
+                + "(full_name, email, password, email_verified) "
+                + "VALUES (?, ?, ?, 0)";
+
+        int userId;
 
         try (Connection connection = DatabaseConnection.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
+             PreparedStatement statement = connection.prepareStatement(
+                     sql, Statement.RETURN_GENERATED_KEYS)) {
 
-            String hashedPassword = BCrypt.hashpw(
-                    password, BCrypt.gensalt(12));
+            String hashedPassword = BCrypt.hashpw(password, BCrypt.gensalt(12));
 
             statement.setString(1, fullName.trim());
-            statement.setString(2, email.trim().toLowerCase());
+            statement.setString(2, normalizedEmail);
             statement.setString(3, hashedPassword);
 
             statement.executeUpdate();
 
-            return new AuthResponse(true, "Account created successfully.");
+            try (ResultSet keys = statement.getGeneratedKeys()) {
+                if (!keys.next()) {
+                    return new AuthResponse(false,
+                            "Unable to create account.");
+                }
+
+                userId = keys.getInt(1);
+            }
+
+            saveVerificationCode(connection, userId, code, EMAIL_VERIFICATION);
 
         } catch (SQLException e) {
+
             if ("23000".equals(e.getSQLState())) {
                 return new AuthResponse(false,
                         "An account with this email already exists.");
             }
 
+            e.printStackTrace();
+            return new AuthResponse(false, "Database error.");
+        }
+
+        try {
+            EmailService.sendVerificationCode(
+                    normalizedEmail, code, EMAIL_VERIFICATION);
+
+            return new AuthResponse(true,
+                    "Account created. A verification code has been sent to your email.");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+
+            return new AuthResponse(false,
+                    "Account created, but the verification email could not be sent. Please try again later.");
+        }
+    }
+
+    // VERIFY EMAIL
+    @WebMethod
+    public AuthResponse verifyEmail(
+            @WebParam(name = "email") String email,
+            @WebParam(name = "code") String code) {
+
+        if (email == null || email.trim().isEmpty()
+                || code == null || !code.matches("\\d{6}")) {
+
+            return new AuthResponse(false,
+                    "A valid email and six-digit code are required.");
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        String selectUser =
+                "SELECT id, email_verified FROM users WHERE email = ?";
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement userStatement =
+                     connection.prepareStatement(selectUser)) {
+
+            userStatement.setString(1, normalizedEmail);
+
+            try (ResultSet userResult = userStatement.executeQuery()) {
+
+                if (!userResult.next()) {
+                    return new AuthResponse(false, "Invalid verification request.");
+                }
+
+                int userId = userResult.getInt("id");
+
+                if (userResult.getBoolean("email_verified")) {
+                    return new AuthResponse(true,
+                            "Email address is already verified.");
+                }
+
+                connection.setAutoCommit(false);
+
+                try {
+                    String selectCode =
+                            "SELECT id, code_hash, attempts "
+                                    + "FROM verification_codes "
+                                    + "WHERE user_id = ? "
+                                    + "AND purpose = ? "
+                                    + "AND expires_at > NOW() "
+                                    + "AND attempts < ? "
+                                    + "ORDER BY id DESC LIMIT 1 FOR UPDATE";
+
+                    int verificationId;
+                    String storedHash;
+
+                    try (PreparedStatement codeStatement =
+                                 connection.prepareStatement(selectCode)) {
+
+                        codeStatement.setInt(1, userId);
+                        codeStatement.setString(2, EMAIL_VERIFICATION);
+                        codeStatement.setInt(3, MAX_ATTEMPTS);
+
+                        try (ResultSet codeResult = codeStatement.executeQuery()) {
+
+                            if (!codeResult.next()) {
+                                connection.rollback();
+                                return new AuthResponse(false,
+                                        "Verification code expired or invalid. Request a new code.");
+                            }
+
+                            verificationId = codeResult.getInt("id");
+                            storedHash = codeResult.getString("code_hash");
+                        }
+                    }
+
+                    if (!BCrypt.checkpw(code, storedHash)) {
+
+                        String updateAttempts =
+                                "UPDATE verification_codes "
+                                        + "SET attempts = attempts + 1 WHERE id = ?";
+
+                        try (PreparedStatement attemptStatement =
+                                     connection.prepareStatement(updateAttempts)) {
+
+                            attemptStatement.setInt(1, verificationId);
+                            attemptStatement.executeUpdate();
+                        }
+
+                        connection.commit();
+
+                        return new AuthResponse(false,
+                                "Incorrect verification code.");
+                    }
+
+                    String activateUser =
+                            "UPDATE users SET email_verified = 1 WHERE id = ?";
+
+                    try (PreparedStatement activateStatement =
+                                 connection.prepareStatement(activateUser)) {
+
+                        activateStatement.setInt(1, userId);
+                        activateStatement.executeUpdate();
+                    }
+
+                    deleteVerificationCodes(connection, userId, EMAIL_VERIFICATION);
+
+                    connection.commit();
+
+                    return new AuthResponse(true,
+                            "Email verified successfully. You can now log in.");
+
+                } catch (Exception e) {
+                    connection.rollback();
+                    throw e;
+                } finally {
+                    connection.setAutoCommit(true);
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new AuthResponse(false, "Database error.");
+        }
+    }
+
+    // RESEND VERIFICATION CODE
+    @WebMethod
+    public AuthResponse resendVerificationCode(
+            @WebParam(name = "email") String email) {
+
+        if (email == null || email.trim().isEmpty()) {
+            return new AuthResponse(false, "Email is required.");
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        String selectUser =
+                "SELECT id, email_verified FROM users WHERE email = ?";
+
+        String code = generateVerificationCode();
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement userStatement =
+                     connection.prepareStatement(selectUser)) {
+
+            userStatement.setString(1, normalizedEmail);
+
+            try (ResultSet userResult = userStatement.executeQuery()) {
+
+                if (!userResult.next()) {
+                    return new AuthResponse(false,
+                            "No account found with this email.");
+                }
+
+                int userId = userResult.getInt("id");
+
+                if (userResult.getBoolean("email_verified")) {
+                    return new AuthResponse(false,
+                            "This email address is already verified.");
+                }
+
+                String cooldownSql =
+                        "SELECT COUNT(*) FROM verification_codes "
+                                + "WHERE user_id = ? AND purpose = ? "
+                                + "AND created_at > DATE_SUB(NOW(), INTERVAL "
+                                + RESEND_DELAY_SECONDS + " SECOND)";
+
+                try (PreparedStatement cooldownStatement =
+                             connection.prepareStatement(cooldownSql)) {
+
+                    cooldownStatement.setInt(1, userId);
+                    cooldownStatement.setString(2, EMAIL_VERIFICATION);
+
+                    try (ResultSet cooldownResult =
+                                 cooldownStatement.executeQuery()) {
+
+                        if (cooldownResult.next()
+                                && cooldownResult.getInt(1) > 0) {
+
+                            return new AuthResponse(false,
+                                    "Please wait 60 seconds before requesting another code.");
+                        }
+                    }
+                }
+
+                saveVerificationCode(
+                        connection, userId, code, EMAIL_VERIFICATION);
+            }
+
+            try {
+                EmailService.sendVerificationCode(
+                        normalizedEmail, code, EMAIL_VERIFICATION);
+
+                return new AuthResponse(true,
+                        "A new verification code has been sent.");
+
+            } catch (Exception e) {
+                e.printStackTrace();
+
+                return new AuthResponse(false,
+                        "Unable to send verification email.");
+            }
+
+        } catch (SQLException e) {
             e.printStackTrace();
             return new AuthResponse(false, "Database error.");
         }
@@ -79,11 +324,14 @@ public class AuthenticationService {
 
         if (email == null || password == null
                 || email.trim().isEmpty() || password.isEmpty()) {
+
             return new AuthResponse(false,
                     "Email and password are required.");
         }
 
-        String sql = "SELECT id, full_name, email, password FROM users WHERE email = ?";
+        String sql =
+                "SELECT id, full_name, email, password, email_verified "
+                        + "FROM users WHERE email = ?";
 
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -102,6 +350,11 @@ public class AuthenticationService {
                 if (!BCrypt.checkpw(password, storedPassword)) {
                     return new AuthResponse(false,
                             "Invalid email or password.");
+                }
+
+                if (!result.getBoolean("email_verified")) {
+                    return new AuthResponse(false,
+                            "Please verify your email address before logging in.");
                 }
 
                 int userId = result.getInt("id");
@@ -178,10 +431,10 @@ public class AuthenticationService {
         }
 
         String sql =
-                "SELECT u.id, u.full_name, u.email " +
-                        "FROM users u " +
-                        "INNER JOIN user_tokens t ON u.id = t.user_id " +
-                        "WHERE t.token = ?";
+                "SELECT u.id, u.full_name, u.email "
+                        + "FROM users u "
+                        + "INNER JOIN user_tokens t ON u.id = t.user_id "
+                        + "WHERE t.token = ?";
 
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -209,6 +462,64 @@ public class AuthenticationService {
             e.printStackTrace();
             return new AuthResponse(false, "Database error.");
         }
+    }
+
+    // SAVE A NEW VERIFICATION CODE
+    private void saveVerificationCode(
+            Connection connection,
+            int userId,
+            String code,
+            String purpose) throws SQLException {
+
+        String deleteSql =
+                "DELETE FROM verification_codes WHERE user_id = ? AND purpose = ?";
+
+        try (PreparedStatement deleteStatement =
+                     connection.prepareStatement(deleteSql)) {
+
+            deleteStatement.setInt(1, userId);
+            deleteStatement.setString(2, purpose);
+            deleteStatement.executeUpdate();
+        }
+
+        String insertSql =
+                "INSERT INTO verification_codes "
+                        + "(user_id, code_hash, purpose, expires_at, attempts) "
+                        + "VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL "
+                        + CODE_VALIDITY_MINUTES + " MINUTE), 0)";
+
+        try (PreparedStatement insertStatement =
+                     connection.prepareStatement(insertSql)) {
+
+            insertStatement.setInt(1, userId);
+            insertStatement.setString(2,
+                    BCrypt.hashpw(code, BCrypt.gensalt(10)));
+            insertStatement.setString(3, purpose);
+
+            insertStatement.executeUpdate();
+        }
+    }
+
+    // DELETE USED CODES
+    private void deleteVerificationCodes(
+            Connection connection,
+            int userId,
+            String purpose) throws SQLException {
+
+        String sql =
+                "DELETE FROM verification_codes WHERE user_id = ? AND purpose = ?";
+
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+
+            statement.setInt(1, userId);
+            statement.setString(2, purpose);
+            statement.executeUpdate();
+        }
+    }
+
+    // GENERATE SIX-DIGIT CODE
+    private String generateVerificationCode() {
+        return String.format("%06d", RANDOM.nextInt(1000000));
     }
 
     // GENERATE A RANDOM SESSION TOKEN
