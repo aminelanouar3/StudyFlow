@@ -8,19 +8,16 @@ import javax.ejb.Stateless;
 import javax.jws.WebMethod;
 import javax.jws.WebParam;
 import javax.jws.WebService;
-import javax.mail.MessagingException;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import org.mindrot.jbcrypt.BCrypt;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Base64;
-
-import org.mindrot.jbcrypt.BCrypt;
 
 @Stateless
 @WebService(
@@ -784,6 +781,102 @@ public class AuthenticationService {
             return new AuthResponse(false, "Database error.");
         }
     }
+
+    @WebMethod(operationName = "changePassword")
+    public AuthResponse changePassword(
+            @WebParam(name = "token") String token,
+            @WebParam(name = "currentPassword") String currentPassword,
+            @WebParam(name = "newPassword") String newPassword) {
+
+        if (token == null || token.trim().isEmpty()) {
+            return new AuthResponse(false, "Invalid session token.");
+        }
+
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            return new AuthResponse(false, "Current password is required.");
+        }
+
+        if (newPassword == null || newPassword.length() < 8) {
+            return new AuthResponse(false,
+                    "New password must contain at least 8 characters.");
+        }
+
+        try (Connection connection = DatabaseConnection.getConnection()) {
+
+            int userId;
+            String storedPassword;
+
+            // Verify session and retrieve current password hash
+            String selectSql =
+                    "SELECT u.id, u.password " +
+                            "FROM users u " +
+                            "INNER JOIN user_tokens t ON u.id = t.user_id " +
+                            "WHERE t.token = ?";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(selectSql)) {
+
+                statement.setString(1, hashToken(token));
+
+                try (ResultSet result = statement.executeQuery()) {
+
+                    if (!result.next()) {
+                        return new AuthResponse(false,
+                                "Invalid or expired session.");
+                    }
+
+                    userId = result.getInt("id");
+                    storedPassword = result.getString("password");
+                }
+            }
+
+            // Verify current password
+            if (!BCrypt.checkpw(currentPassword, storedPassword)) {
+                return new AuthResponse(false,
+                        "Current password is incorrect.");
+            }
+
+            // Prevent reusing the current password
+            if (BCrypt.checkpw(newPassword, storedPassword)) {
+                return new AuthResponse(false,
+                        "New password must be different from current password.");
+            }
+
+            // Hash the new password
+            String newPasswordHash = BCrypt.hashpw(
+                    newPassword,
+                    BCrypt.gensalt()
+            );
+
+            // Update password without invalidating existing sessions
+            String updateSql =
+                    "UPDATE users SET password = ? WHERE id = ?";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(updateSql)) {
+
+                statement.setString(1, newPasswordHash);
+                statement.setInt(2, userId);
+
+                int updatedRows = statement.executeUpdate();
+
+                if (updatedRows != 1) {
+                    return new AuthResponse(false,
+                            "Failed to update password.");
+                }
+            }
+
+            return new AuthResponse(true,
+                    "Password changed successfully.");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+
+            return new AuthResponse(false,
+                    "An error occurred while changing password.");
+        }
+    }
+
 
     // SAVE A NEW VERIFICATION CODE
     private void saveVerificationCode(
