@@ -1,4 +1,4 @@
-
+require('dotenv').config();
 const http = require("http");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");

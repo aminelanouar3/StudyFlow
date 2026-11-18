@@ -18,7 +18,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.sql.Timestamp;
 import java.util.Base64;
 
 import org.mindrot.jbcrypt.BCrypt;
@@ -33,6 +32,8 @@ public class AuthenticationService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private static final String EMAIL_VERIFICATION = "EMAIL_VERIFICATION";
+    private static final String PASSWORD_RESET = "PASSWORD_RESET";
+
     private static final int CODE_VALIDITY_MINUTES = 5;
     private static final int MAX_ATTEMPTS = 5;
     private static final int RESEND_DELAY_SECONDS = 60;
@@ -75,8 +76,7 @@ public class AuthenticationService {
 
             try (ResultSet keys = statement.getGeneratedKeys()) {
                 if (!keys.next()) {
-                    return new AuthResponse(false,
-                            "Unable to create account.");
+                    return new AuthResponse(false, "Unable to create account.");
                 }
 
                 userId = keys.getInt(1);
@@ -232,7 +232,7 @@ public class AuthenticationService {
         }
     }
 
-    // RESEND VERIFICATION CODE
+    // RESEND EMAIL VERIFICATION CODE
     @WebMethod
     public AuthResponse resendVerificationCode(
             @WebParam(name = "email") String email) {
@@ -311,6 +311,327 @@ public class AuthenticationService {
             }
 
         } catch (SQLException e) {
+            e.printStackTrace();
+            return new AuthResponse(false, "Database error.");
+        }
+    }
+
+    // FORGOT PASSWORD
+    @WebMethod
+    public AuthResponse forgotPassword(
+            @WebParam(name = "email") String email) {
+
+        if (email == null || email.trim().isEmpty()) {
+            return new AuthResponse(false, "Email is required.");
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        String sql =
+                "SELECT id FROM users "
+                        + "WHERE email = ? AND email_verified = 1";
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+
+            statement.setString(1, normalizedEmail);
+
+            try (ResultSet result = statement.executeQuery()) {
+
+                if (!result.next()) {
+                    return new AuthResponse(true,
+                            "If an account exists with this email, a reset code will be sent.");
+                }
+
+                int userId = result.getInt("id");
+
+                String cooldownSql =
+                        "SELECT COUNT(*) FROM verification_codes "
+                                + "WHERE user_id = ? AND purpose = ? "
+                                + "AND created_at > DATE_SUB(NOW(), INTERVAL "
+                                + RESEND_DELAY_SECONDS + " SECOND)";
+
+                try (PreparedStatement cooldownStatement =
+                             connection.prepareStatement(cooldownSql)) {
+
+                    cooldownStatement.setInt(1, userId);
+                    cooldownStatement.setString(2, PASSWORD_RESET);
+
+                    try (ResultSet cooldownResult =
+                                 cooldownStatement.executeQuery()) {
+
+                        if (cooldownResult.next()
+                                && cooldownResult.getInt(1) > 0) {
+
+                            return new AuthResponse(true,
+                                    "If an account exists with this email, a reset code will be sent.");
+                        }
+                    }
+                }
+
+                String code = generateVerificationCode();
+
+                saveVerificationCode(
+                        connection, userId, code, PASSWORD_RESET);
+
+                try {
+                    EmailService.sendVerificationCode(
+                            normalizedEmail, code, PASSWORD_RESET);
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                return new AuthResponse(true,
+                        "If an account exists with this email, a reset code will be sent.");
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return new AuthResponse(false, "Database error.");
+        }
+    }
+
+    // VERIFY PASSWORD RESET CODE
+    @WebMethod
+    public AuthResponse verifyResetCode(
+            @WebParam(name = "email") String email,
+            @WebParam(name = "code") String code) {
+
+        if (email == null || email.trim().isEmpty()
+                || code == null || !code.matches("\\d{6}")) {
+
+            return new AuthResponse(false,
+                    "A valid email and six-digit code are required.");
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        String userSql =
+                "SELECT id FROM users "
+                        + "WHERE email = ? AND email_verified = 1";
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement userStatement =
+                     connection.prepareStatement(userSql)) {
+
+            userStatement.setString(1, normalizedEmail);
+
+            try (ResultSet userResult = userStatement.executeQuery()) {
+
+                if (!userResult.next()) {
+                    return new AuthResponse(false,
+                            "Invalid or expired reset code.");
+                }
+
+                int userId = userResult.getInt("id");
+
+                connection.setAutoCommit(false);
+
+                try {
+                    String codeSql =
+                            "SELECT id, code_hash FROM verification_codes "
+                                    + "WHERE user_id = ? "
+                                    + "AND purpose = ? "
+                                    + "AND expires_at > NOW() "
+                                    + "AND attempts < ? "
+                                    + "ORDER BY id DESC LIMIT 1 FOR UPDATE";
+
+                    int codeId;
+                    String storedHash;
+
+                    try (PreparedStatement codeStatement =
+                                 connection.prepareStatement(codeSql)) {
+
+                        codeStatement.setInt(1, userId);
+                        codeStatement.setString(2, PASSWORD_RESET);
+                        codeStatement.setInt(3, MAX_ATTEMPTS);
+
+                        try (ResultSet codeResult = codeStatement.executeQuery()) {
+
+                            if (!codeResult.next()) {
+                                connection.rollback();
+                                return new AuthResponse(false,
+                                        "Invalid or expired reset code.");
+                            }
+
+                            codeId = codeResult.getInt("id");
+                            storedHash = codeResult.getString("code_hash");
+                        }
+                    }
+
+                    if (!BCrypt.checkpw(code, storedHash)) {
+
+                        String updateSql =
+                                "UPDATE verification_codes "
+                                        + "SET attempts = attempts + 1 "
+                                        + "WHERE id = ?";
+
+                        try (PreparedStatement updateStatement =
+                                     connection.prepareStatement(updateSql)) {
+
+                            updateStatement.setInt(1, codeId);
+                            updateStatement.executeUpdate();
+                        }
+
+                        connection.commit();
+
+                        return new AuthResponse(false,
+                                "Incorrect reset code.");
+                    }
+
+                    connection.commit();
+
+                    return new AuthResponse(true,
+                            "Reset code verified successfully.");
+
+                } catch (Exception e) {
+                    connection.rollback();
+                    throw e;
+                } finally {
+                    connection.setAutoCommit(true);
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new AuthResponse(false, "Database error.");
+        }
+    }
+
+    // RESET PASSWORD
+    @WebMethod
+    public AuthResponse resetPassword(
+            @WebParam(name = "email") String email,
+            @WebParam(name = "code") String code,
+            @WebParam(name = "newPassword") String newPassword) {
+
+        if (email == null || email.trim().isEmpty()
+                || code == null || !code.matches("\\d{6}")
+                || newPassword == null || newPassword.length() < 8) {
+
+            return new AuthResponse(false,
+                    "Valid email, six-digit code and a password of at least 8 characters are required.");
+        }
+
+        String normalizedEmail = email.trim().toLowerCase();
+
+        String userSql =
+                "SELECT id FROM users "
+                        + "WHERE email = ? AND email_verified = 1";
+
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement userStatement =
+                     connection.prepareStatement(userSql)) {
+
+            userStatement.setString(1, normalizedEmail);
+
+            try (ResultSet userResult = userStatement.executeQuery()) {
+
+                if (!userResult.next()) {
+                    return new AuthResponse(false,
+                            "Invalid or expired reset code.");
+                }
+
+                int userId = userResult.getInt("id");
+
+                connection.setAutoCommit(false);
+
+                try {
+                    String codeSql =
+                            "SELECT id, code_hash FROM verification_codes "
+                                    + "WHERE user_id = ? "
+                                    + "AND purpose = ? "
+                                    + "AND expires_at > NOW() "
+                                    + "AND attempts < ? "
+                                    + "ORDER BY id DESC LIMIT 1 FOR UPDATE";
+
+                    int codeId;
+                    String storedHash;
+
+                    try (PreparedStatement codeStatement =
+                                 connection.prepareStatement(codeSql)) {
+
+                        codeStatement.setInt(1, userId);
+                        codeStatement.setString(2, PASSWORD_RESET);
+                        codeStatement.setInt(3, MAX_ATTEMPTS);
+
+                        try (ResultSet codeResult = codeStatement.executeQuery()) {
+
+                            if (!codeResult.next()) {
+                                connection.rollback();
+                                return new AuthResponse(false,
+                                        "Invalid or expired reset code.");
+                            }
+
+                            codeId = codeResult.getInt("id");
+                            storedHash = codeResult.getString("code_hash");
+                        }
+                    }
+
+                    if (!BCrypt.checkpw(code, storedHash)) {
+
+                        String updateAttempts =
+                                "UPDATE verification_codes "
+                                        + "SET attempts = attempts + 1 "
+                                        + "WHERE id = ?";
+
+                        try (PreparedStatement attemptStatement =
+                                     connection.prepareStatement(updateAttempts)) {
+
+                            attemptStatement.setInt(1, codeId);
+                            attemptStatement.executeUpdate();
+                        }
+
+                        connection.commit();
+
+                        return new AuthResponse(false,
+                                "Incorrect reset code.");
+                    }
+
+                    String hashedPassword =
+                            BCrypt.hashpw(newPassword, BCrypt.gensalt(12));
+
+                    String updatePassword =
+                            "UPDATE users SET password = ? WHERE id = ?";
+
+                    try (PreparedStatement passwordStatement =
+                                 connection.prepareStatement(updatePassword)) {
+
+                        passwordStatement.setString(1, hashedPassword);
+                        passwordStatement.setInt(2, userId);
+                        passwordStatement.executeUpdate();
+                    }
+
+                    // Delete the used reset code.
+                    deleteVerificationCodes(
+                            connection, userId, PASSWORD_RESET);
+
+                    // Invalidate all existing sessions for this user.
+                    String deleteSessions =
+                            "DELETE FROM user_tokens WHERE user_id = ?";
+
+                    try (PreparedStatement sessionStatement =
+                                 connection.prepareStatement(deleteSessions)) {
+
+                        sessionStatement.setInt(1, userId);
+                        sessionStatement.executeUpdate();
+                    }
+
+                    connection.commit();
+
+                    return new AuthResponse(true,
+                            "Password reset successfully. Please log in with your new password.");
+
+                } catch (Exception e) {
+                    connection.rollback();
+                    throw e;
+                } finally {
+                    connection.setAutoCommit(true);
+                }
+            }
+
+        } catch (Exception e) {
             e.printStackTrace();
             return new AuthResponse(false, "Database error.");
         }
