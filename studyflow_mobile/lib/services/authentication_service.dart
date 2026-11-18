@@ -89,7 +89,7 @@ class AuthenticationService {
     });
   }
 
-  // RESEND VERIFICATION CODE
+  // RESEND EMAIL VERIFICATION CODE
   static Future<AuthResponse> resendVerificationCode(
     String email,
   ) {
@@ -98,7 +98,40 @@ class AuthenticationService {
     });
   }
 
-  // LOGIN - named arguments preserved
+  // FORGOT PASSWORD
+  static Future<AuthResponse> forgotPassword(
+    String email,
+  ) {
+    return _send('forgotPassword', {
+      'email': email,
+    });
+  }
+
+  // VERIFY PASSWORD RESET CODE
+  static Future<AuthResponse> verifyResetCode(
+    String email,
+    String code,
+  ) {
+    return _send('verifyResetCode', {
+      'email': email,
+      'code': code,
+    });
+  }
+
+  // RESET PASSWORD
+  static Future<AuthResponse> resetPassword(
+    String email,
+    String code,
+    String newPassword,
+  ) {
+    return _send('resetPassword', {
+      'email': email,
+      'code': code,
+      'newPassword': newPassword,
+    });
+  }
+
+  // LOGIN
   static Future<AuthResponse> login({
     required String email,
     required String password,
@@ -109,7 +142,7 @@ class AuthenticationService {
     });
   }
 
-  // LOGOUT - named argument preserved
+  // LOGOUT
   static Future<AuthResponse> logout({
     required String token,
   }) {
@@ -118,7 +151,7 @@ class AuthenticationService {
     });
   }
 
-  // GET PROFILE - named argument preserved
+  // GET PROFILE
   static Future<AuthResponse> getProfile({
     required String token,
   }) {
