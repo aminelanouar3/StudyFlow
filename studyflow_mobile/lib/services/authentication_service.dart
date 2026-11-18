@@ -1,6 +1,5 @@
 
 import 'package:http/http.dart' as http;
-import 'package:xml/xml.dart';
 
 import '../config/api_config.dart';
 import '../models/auth_response.dart';
@@ -17,20 +16,25 @@ class AuthenticationService {
 
   static Future<AuthResponse> _send(
     String operation,
-    String parameters,
+    Map<String, String> parameters,
   ) async {
+    final parameterXml = parameters.entries
+        .map((entry) =>
+            '<${entry.key}>${_escape(entry.value)}</${entry.key}>')
+        .join();
+
     final envelope = '''
 <?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+<soap:Envelope
+    xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:ser="${ApiConfig.namespace}">
-  <soapenv:Header/>
-  <soapenv:Body>
+  <soap:Header/>
+  <soap:Body>
     <ser:$operation>
-      $parameters
+      $parameterXml
     </ser:$operation>
-  </soapenv:Body>
-</soapenv:Envelope>
+  </soap:Body>
+</soap:Envelope>
 ''';
 
     final response = await http
@@ -45,65 +49,81 @@ class AuthenticationService {
         .timeout(ApiConfig.timeout);
 
     if (response.body.isEmpty) {
-      throw Exception('The SOAP server returned an empty response.');
+      throw Exception('The server returned an empty response.');
     }
 
-    final result = AuthResponse.fromXml(response.body);
+    final authResponse = AuthResponse.fromXml(response.body);
 
-    if (response.statusCode != 200 && result.message.isEmpty) {
-      throw Exception('SOAP request failed: HTTP ${response.statusCode}');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        authResponse.message.isNotEmpty
+            ? authResponse.message
+            : 'Server error: HTTP ${response.statusCode}',
+      );
     }
 
-    return result;
+    return authResponse;
   }
 
-  // Register a new student account.
-  static Future<AuthResponse> register({
-    required String fullName,
-    required String email,
-    required String password,
-  }) {
-    final parameters = '''
-      <fullName>${_escape(fullName)}</fullName>
-      <email>${_escape(email)}</email>
-      <password>${_escape(password)}</password>
-    ''';
-
-    return _send('register', parameters);
+  // REGISTER
+  static Future<AuthResponse> register(
+    String fullName,
+    String email,
+    String password,
+  ) {
+    return _send('register', {
+      'fullName': fullName,
+      'email': email,
+      'password': password,
+    });
   }
 
-  // Authenticate an existing student.
+  // VERIFY EMAIL
+  static Future<AuthResponse> verifyEmail(
+    String email,
+    String code,
+  ) {
+    return _send('verifyEmail', {
+      'email': email,
+      'code': code,
+    });
+  }
+
+  // RESEND VERIFICATION CODE
+  static Future<AuthResponse> resendVerificationCode(
+    String email,
+  ) {
+    return _send('resendVerificationCode', {
+      'email': email,
+    });
+  }
+
+  // LOGIN - named arguments preserved
   static Future<AuthResponse> login({
     required String email,
     required String password,
   }) {
-    final parameters = '''
-      <email>${_escape(email)}</email>
-      <password>${_escape(password)}</password>
-    ''';
-
-    return _send('login', parameters);
+    return _send('login', {
+      'email': email,
+      'password': password,
+    });
   }
 
-  // End the current session.
+  // LOGOUT - named argument preserved
   static Future<AuthResponse> logout({
     required String token,
   }) {
-    final parameters = '''
-      <token>${_escape(token)}</token>
-    ''';
-
-    return _send('logout', parameters);
+    return _send('logout', {
+      'token': token,
+    });
   }
 
-  // Retrieve the connected student's profile.
+  // GET PROFILE - named argument preserved
   static Future<AuthResponse> getProfile({
     required String token,
   }) {
-    final parameters = '''
-      <token>${_escape(token)}</token>
-    ''';
-
-    return _send('getProfile', parameters);
+    return _send('getProfile', {
+      'token': token,
+    });
   }
 }
