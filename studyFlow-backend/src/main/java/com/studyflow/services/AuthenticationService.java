@@ -18,6 +18,8 @@ import java.security.SecureRandom;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Base64;
+import java.sql.Timestamp;
+
 
 @Stateless
 @WebService(
@@ -30,6 +32,7 @@ public class AuthenticationService {
 
     private static final String EMAIL_VERIFICATION = "EMAIL_VERIFICATION";
     private static final String PASSWORD_RESET = "PASSWORD_RESET";
+    private static final String EMAIL_CHANGE = "EMAIL_CHANGE";
 
     private static final int CODE_VALIDITY_MINUTES = 5;
     private static final int MAX_ATTEMPTS = 5;
@@ -874,6 +877,446 @@ public class AuthenticationService {
 
             return new AuthResponse(false,
                     "An error occurred while changing password.");
+        }
+    }
+
+    @WebMethod(operationName = "changeFullName")
+    public AuthResponse changeFullName(
+            @WebParam(name = "token") String token,
+            @WebParam(name = "currentPassword") String currentPassword,
+            @WebParam(name = "newFullName") String newFullName) {
+
+        if (token == null || token.trim().isEmpty()) {
+            return new AuthResponse(false, "Authentication token is required.");
+        }
+
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            return new AuthResponse(false, "Current password is required.");
+        }
+
+        if (newFullName == null || newFullName.trim().isEmpty()) {
+            return new AuthResponse(false, "New name is required.");
+        }
+
+        newFullName = newFullName.trim();
+
+        try (Connection connection = DatabaseConnection.getConnection()) {
+
+            String selectSql =
+                    "SELECT u.id, u.password, u.email, u.full_name " +
+                            "FROM users u " +
+                            "INNER JOIN user_tokens t ON u.id = t.user_id " +
+                            "WHERE t.token = ?";
+
+            int userId;
+            String storedPassword;
+            String currentFullName;
+            String email;
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(selectSql)) {
+
+                statement.setString(1, hashToken(token));
+
+                try (ResultSet result = statement.executeQuery()) {
+
+                    if (!result.next()) {
+                        return new AuthResponse(false, "Invalid or expired session.");
+                    }
+
+                    userId = result.getInt("id");
+                    storedPassword = result.getString("password");
+                    email = result.getString("email");
+                    currentFullName = result.getString("full_name");
+                }
+            }
+
+            if (!BCrypt.checkpw(currentPassword, storedPassword)) {
+                return new AuthResponse(false, "Incorrect current password.");
+            }
+
+            if (newFullName.equals(currentFullName)) {
+                return new AuthResponse(false, "The new name is identical to the current name.");
+            }
+
+            String updateSql =
+                    "UPDATE users SET full_name = ? WHERE id = ?";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(updateSql)) {
+
+                statement.setString(1, newFullName);
+                statement.setInt(2, userId);
+
+                int updatedRows = statement.executeUpdate();
+
+                if (updatedRows == 0) {
+                    return new AuthResponse(false, "Name update failed.");
+                }
+            }
+
+            AuthResponse response =
+                    new AuthResponse(true, "Name updated successfully.");
+
+            response.setUserId(userId);
+            response.setFullName(newFullName);
+            response.setEmail(email);
+
+            return response;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new AuthResponse(false, "Unable to update name.");
+        }
+    }
+
+
+    @WebMethod(operationName = "requestEmailChange")
+    public AuthResponse requestEmailChange(
+            @WebParam(name = "token") String token,
+            @WebParam(name = "currentPassword") String currentPassword,
+            @WebParam(name = "newEmail") String newEmail) {
+
+        if (token == null || token.trim().isEmpty()) {
+            return new AuthResponse(false, "Invalid session token.");
+        }
+
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            return new AuthResponse(false, "Current password is required.");
+        }
+
+        if (newEmail == null || !newEmail.trim().matches(
+                "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+            return new AuthResponse(false, "Invalid email address.");
+        }
+
+        newEmail = newEmail.trim();
+
+        int userId;
+        String oldEmail;
+        String storedPassword;
+        String code = generateVerificationCode();
+
+        try (Connection connection = DatabaseConnection.getConnection()) {
+
+            // Authenticate the user using the session token
+            String selectSql =
+                    "SELECT u.id, u.email, u.password " +
+                            "FROM users u " +
+                            "INNER JOIN user_tokens t ON u.id = t.user_id " +
+                            "WHERE t.token = ?";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(selectSql)) {
+
+                statement.setString(1, hashToken(token));
+
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) {
+                        return new AuthResponse(false,
+                                "Invalid or expired session.");
+                    }
+
+                    userId = result.getInt("id");
+                    oldEmail = result.getString("email");
+                    storedPassword = result.getString("password");
+                }
+            }
+
+            // Require the current password
+            if (!BCrypt.checkpw(currentPassword, storedPassword)) {
+                return new AuthResponse(false,
+                        "Current password is incorrect.");
+            }
+
+            if (oldEmail.equalsIgnoreCase(newEmail)) {
+                return new AuthResponse(false,
+                        "The new email is the same as your current email.");
+            }
+
+            // Check whether the new email is already used
+            String duplicateSql =
+                    "SELECT id FROM users WHERE LOWER(email) = LOWER(?)";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(duplicateSql)) {
+
+                statement.setString(1, newEmail);
+
+                try (ResultSet result = statement.executeQuery()) {
+                    if (result.next()) {
+                        return new AuthResponse(false,
+                                "This email address is already in use.");
+                    }
+                }
+            }
+
+            // Apply the existing 60-second resend cooldown
+            String cooldownSql =
+                    "SELECT COUNT(*) FROM verification_codes " +
+                            "WHERE user_id = ? AND purpose = ? " +
+                            "AND created_at >= DATE_SUB(NOW(), INTERVAL 60 SECOND)";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(cooldownSql)) {
+
+                statement.setInt(1, userId);
+                statement.setString(2, EMAIL_CHANGE);
+
+                try (ResultSet result = statement.executeQuery()) {
+                    if (result.next() && result.getInt(1) > 0) {
+                        return new AuthResponse(false,
+                                "Please wait before requesting another code.");
+                    }
+                }
+            }
+
+            // Remove previous email-change codes
+            String deleteSql =
+                    "DELETE FROM verification_codes " +
+                            "WHERE user_id = ? AND purpose = ?";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(deleteSql)) {
+
+                statement.setInt(1, userId);
+                statement.setString(2, EMAIL_CHANGE);
+                statement.executeUpdate();
+            }
+
+            // Save the hashed code and pending email
+            String insertSql =
+                    "INSERT INTO verification_codes " +
+                            "(user_id, code_hash, purpose, pending_email, " +
+                            "expires_at, attempts, created_at) " +
+                            "VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE), 0, NOW())";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(insertSql)) {
+
+                statement.setInt(1, userId);
+                statement.setString(2,
+                        BCrypt.hashpw(code, BCrypt.gensalt()));
+                statement.setString(3, EMAIL_CHANGE);
+                statement.setString(4, newEmail);
+                statement.executeUpdate();
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new AuthResponse(false,
+                    "Unable to request email change.");
+        }
+
+        // Send the code to the NEW email address
+        try {
+            EmailService.sendVerificationCode(
+                    newEmail, code, EMAIL_CHANGE);
+
+            return new AuthResponse(true,
+                    "Verification code sent to your new email address.");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+
+            // Delete the unusable code if email delivery fails
+            try (Connection connection = DatabaseConnection.getConnection();
+                 PreparedStatement statement = connection.prepareStatement(
+                         "DELETE FROM verification_codes " +
+                                 "WHERE user_id = ? AND purpose = ?")) {
+
+                statement.setInt(1, userId);
+                statement.setString(2, EMAIL_CHANGE);
+                statement.executeUpdate();
+
+            } catch (Exception cleanupError) {
+                cleanupError.printStackTrace();
+            }
+
+            return new AuthResponse(false,
+                    "Unable to send the verification email.");
+        }
+    }
+
+    @WebMethod(operationName = "verifyEmailChange")
+    public AuthResponse verifyEmailChange(
+            @WebParam(name = "token") String token,
+            @WebParam(name = "code") String code) {
+
+        if (token == null || token.trim().isEmpty()) {
+            return new AuthResponse(false, "Invalid session token.");
+        }
+
+        if (code == null || !code.trim().matches("\\d{6}")) {
+            return new AuthResponse(false, "Invalid verification code.");
+        }
+
+        try (Connection connection = DatabaseConnection.getConnection()) {
+
+            connection.setAutoCommit(false);
+
+            try {
+                int userId;
+
+                // Authenticate the user
+                String userSql =
+                        "SELECT u.id FROM users u " +
+                                "INNER JOIN user_tokens t ON u.id = t.user_id " +
+                                "WHERE t.token = ?";
+
+                try (PreparedStatement statement =
+                             connection.prepareStatement(userSql)) {
+
+                    statement.setString(1, hashToken(token));
+
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) {
+                            connection.rollback();
+                            return new AuthResponse(false,
+                                    "Invalid or expired session.");
+                        }
+
+                        userId = result.getInt("id");
+                    }
+                }
+
+                // Retrieve the pending email-change code
+                String codeSql =
+                        "SELECT id, code_hash, pending_email, expires_at, attempts " +
+                                "FROM verification_codes " +
+                                "WHERE user_id = ? AND purpose = ? " +
+                                "ORDER BY created_at DESC LIMIT 1 FOR UPDATE";
+
+                int codeId;
+                String codeHash;
+                String pendingEmail;
+                Timestamp expiresAt;
+                int attempts;
+
+                try (PreparedStatement statement =
+                             connection.prepareStatement(codeSql)) {
+
+                    statement.setInt(1, userId);
+                    statement.setString(2, EMAIL_CHANGE);
+
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (!result.next()) {
+                            connection.rollback();
+                            return new AuthResponse(false,
+                                    "No pending email change was found.");
+                        }
+
+                        codeId = result.getInt("id");
+                        codeHash = result.getString("code_hash");
+                        pendingEmail = result.getString("pending_email");
+                        expiresAt = result.getTimestamp("expires_at");
+                        attempts = result.getInt("attempts");
+                    }
+                }
+
+                if (attempts >= MAX_ATTEMPTS) {
+                    deleteEmailChangeCode(connection, codeId);
+                    connection.commit();
+
+                    return new AuthResponse(false,
+                            "Maximum verification attempts reached. Request a new code.");
+                }
+
+                if (expiresAt == null ||
+                        expiresAt.before(new Timestamp(System.currentTimeMillis()))) {
+
+                    deleteEmailChangeCode(connection, codeId);
+                    connection.commit();
+
+                    return new AuthResponse(false,
+                            "Verification code has expired. Request a new one.");
+                }
+
+                // Check the submitted code
+                if (!BCrypt.checkpw(code.trim(), codeHash)) {
+
+                    try (PreparedStatement statement =
+                                 connection.prepareStatement(
+                                         "UPDATE verification_codes " +
+                                                 "SET attempts = attempts + 1 WHERE id = ?")) {
+
+                        statement.setInt(1, codeId);
+                        statement.executeUpdate();
+                    }
+
+                    connection.commit();
+
+                    return new AuthResponse(false,
+                            "Incorrect verification code.");
+                }
+
+                // Check again that the pending email is still available
+                String duplicateSql =
+                        "SELECT id FROM users " +
+                                "WHERE LOWER(email) = LOWER(?) AND id <> ?";
+
+                try (PreparedStatement statement =
+                             connection.prepareStatement(duplicateSql)) {
+
+                    statement.setString(1, pendingEmail);
+                    statement.setInt(2, userId);
+
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next()) {
+                            deleteEmailChangeCode(connection, codeId);
+                            connection.commit();
+
+                            return new AuthResponse(false,
+                                    "This email address is already in use.");
+                        }
+                    }
+                }
+
+                // Update email ONLY after successful verification
+                String updateSql =
+                        "UPDATE users SET email = ?, email_verified = 1 " +
+                                "WHERE id = ?";
+
+                try (PreparedStatement statement =
+                             connection.prepareStatement(updateSql)) {
+
+                    statement.setString(1, pendingEmail);
+                    statement.setInt(2, userId);
+                    statement.executeUpdate();
+                }
+
+                // Remove the used verification code
+                deleteEmailChangeCode(connection, codeId);
+
+                connection.commit();
+
+                return new AuthResponse(true,
+                        "Email address changed and verified successfully.");
+
+            } catch (Exception e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new AuthResponse(false,
+                    "An error occurred while verifying the new email.");
+        }
+    }
+
+    private void deleteEmailChangeCode(
+            Connection connection, int codeId) throws Exception {
+
+        String sql = "DELETE FROM verification_codes WHERE id = ?";
+
+        try (PreparedStatement statement =
+                     connection.prepareStatement(sql)) {
+
+            statement.setInt(1, codeId);
+            statement.executeUpdate();
         }
     }
 
