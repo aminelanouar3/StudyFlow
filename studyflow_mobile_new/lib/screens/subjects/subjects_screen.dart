@@ -16,7 +16,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   List<Subject> _subjects = [];
 
   bool _isLoading = true;
-  bool _isCreating = false;
+  bool _isSaving = false;
   String? _error;
 
   @override
@@ -60,15 +60,37 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   }
 
   Future<void> _showCreateSubjectDialog() async {
-    final data = await showDialog<_NewSubjectData>(
+    final data = await showDialog<_SubjectFormData>(
       context: context,
-      builder: (context) => const _CreateSubjectDialog(),
+      builder: (context) => const _SubjectFormDialog(),
     );
 
     if (data == null || !mounted) return;
 
+    await _saveSubject(data);
+  }
+
+  Future<void> _showEditSubjectDialog(Subject subject) async {
+    final data = await showDialog<_SubjectFormData>(
+      context: context,
+      builder: (context) => _SubjectFormDialog(
+        initialName: subject.name,
+        initialDescription: subject.description ?? '',
+        initialColor: subject.color,
+      ),
+    );
+
+    if (data == null || !mounted) return;
+
+    await _saveSubject(data, subjectId: subject.id.toString());
+  }
+
+  Future<void> _saveSubject(
+    _SubjectFormData data, {
+    String? subjectId,
+  }) async {
     setState(() {
-      _isCreating = true;
+      _isSaving = true;
     });
 
     try {
@@ -78,12 +100,22 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         throw Exception('Your session has expired. Please sign in again.');
       }
 
-      await SubjectService.createSubject(
-        token: token,
-        name: data.name,
-        description: data.description,
-        color: data.color,
-      );
+      if (subjectId == null) {
+        await SubjectService.createSubject(
+          token: token,
+          name: data.name,
+          description: data.description,
+          color: data.color,
+        );
+      } else {
+        await SubjectService.updateSubject(
+          token: token,
+          subjectId: subjectId,
+          name: data.name,
+          description: data.description,
+          color: data.color,
+        );
+      }
 
       if (!mounted) return;
 
@@ -92,8 +124,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Subject created successfully.'),
+        SnackBar(
+          content: Text(
+            subjectId == null
+                ? 'Subject created successfully.'
+                : 'Subject updated successfully.',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -111,7 +147,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _isCreating = false;
+          _isSaving = false;
         });
       }
     }
@@ -145,15 +181,13 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        onPressed: _isCreating ? null : _showCreateSubjectDialog,
+        onPressed: _isSaving ? null : _showCreateSubjectDialog,
         tooltip: 'Create subject',
-        child: _isCreating
+        child: _isSaving
             ? const SizedBox(
                 width: 22,
                 height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                ),
+                child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.add),
       ),
@@ -189,9 +223,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                 ],
               ),
             ),
-            Expanded(
-              child: _buildContent(),
-            ),
+            Expanded(child: _buildContent()),
           ],
         ),
       ),
@@ -200,9 +232,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
   Widget _buildContent() {
     if (_isLoading && _subjects.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null && _subjects.isEmpty) {
@@ -218,10 +248,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                 color: Colors.redAccent,
               ),
               const SizedBox(height: 16),
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-              ),
+              Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 16),
               ElevatedButton.icon(
                 onPressed: _loadSubjects,
@@ -257,11 +284,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
               ),
             ),
             SizedBox(height: 8),
-            Center(
-              child: Text(
-                'Tap + to create your first subject.',
-              ),
-            ),
+            Center(child: Text('Tap + to create your first subject.')),
           ],
         ),
       );
@@ -329,9 +352,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       ],
                     ),
                   ),
-                  const Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey,
+                  IconButton(
+                    tooltip: 'Edit subject',
+                    onPressed: _isSaving
+                        ? null
+                        : () => _showEditSubjectDialog(subject),
+                    icon: const Icon(Icons.edit_outlined),
                   ),
                 ],
               ),
@@ -343,31 +369,38 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   }
 }
 
-class _NewSubjectData {
+class _SubjectFormData {
   final String name;
   final String description;
   final String color;
 
-  const _NewSubjectData({
+  const _SubjectFormData({
     required this.name,
     required this.description,
     required this.color,
   });
 }
 
-class _CreateSubjectDialog extends StatefulWidget {
-  const _CreateSubjectDialog();
+class _SubjectFormDialog extends StatefulWidget {
+  final String? initialName;
+  final String initialDescription;
+  final String? initialColor;
+
+  const _SubjectFormDialog({
+    this.initialName,
+    this.initialDescription = '',
+    this.initialColor,
+  });
 
   @override
-  State<_CreateSubjectDialog> createState() =>
-      _CreateSubjectDialogState();
+  State<_SubjectFormDialog> createState() => _SubjectFormDialogState();
 }
 
-class _CreateSubjectDialogState extends State<_CreateSubjectDialog> {
+class _SubjectFormDialogState extends State<_SubjectFormDialog> {
   final _formKey = GlobalKey<FormState>();
 
-  final _nameController = TextEditingController();
-  final _descriptionController = TextEditingController();
+  late final TextEditingController _nameController;
+  late final TextEditingController _descriptionController;
 
   static const List<Color> _colors = [
     Color(0xFF3157D5),
@@ -380,7 +413,48 @@ class _CreateSubjectDialogState extends State<_CreateSubjectDialog> {
     Color(0xFF34495E),
   ];
 
-  Color _selectedColor = _colors.first;
+  late Color _selectedColor;
+
+  bool get _isEditing => widget.initialName != null;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _nameController = TextEditingController(
+      text: widget.initialName ?? '',
+    );
+
+    _descriptionController = TextEditingController(
+      text: widget.initialDescription,
+    );
+
+    _selectedColor = _parseInitialColor(widget.initialColor);
+  }
+
+  Color _parseInitialColor(String? value) {
+    if (value == null || value.isEmpty) {
+      return _colors.first;
+    }
+
+    var hex = value.trim().replaceFirst('#', '');
+
+    if (hex.startsWith('0x')) {
+      hex = hex.substring(2);
+    }
+
+    final parsed = int.tryParse(hex, radix: 16);
+
+    if (parsed == null) {
+      return _colors.first;
+    }
+
+    final color = Color(
+      hex.length <= 6 ? parsed | 0xFF000000 : parsed,
+    );
+
+    return color;
+  }
 
   @override
   void dispose() {
@@ -397,7 +471,7 @@ class _CreateSubjectDialogState extends State<_CreateSubjectDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     Navigator.of(context).pop(
-      _NewSubjectData(
+      _SubjectFormData(
         name: _nameController.text.trim(),
         description: _descriptionController.text.trim(),
         color: _colorToHex(_selectedColor),
@@ -408,7 +482,7 @@ class _CreateSubjectDialogState extends State<_CreateSubjectDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Create Subject'),
+      title: Text(_isEditing ? 'Edit Subject' : 'Create Subject'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -503,7 +577,7 @@ class _CreateSubjectDialogState extends State<_CreateSubjectDialog> {
         ),
         ElevatedButton(
           onPressed: _submit,
-          child: const Text('Create'),
+          child: Text(_isEditing ? 'Save changes' : 'Create'),
         ),
       ],
     );
