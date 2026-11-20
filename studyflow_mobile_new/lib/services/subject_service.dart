@@ -131,6 +131,39 @@ class SubjectService {
     _checkSuccess(result);
   }
 
+  static Future<void> deleteSubject({
+    required String token,
+    required String subjectId,
+    required bool deleteTasks,
+  }) async {
+    final envelope = '''
+<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope
+    xmlns:soap="$_soapNamespace"
+    xmlns:ser="$_serviceNamespace">
+  <soap:Header/>
+  <soap:Body>
+    <ser:deleteSubject>
+      <token>${_escapeXml(token)}</token>
+      <subjectId>${_escapeXml(subjectId)}</subjectId>
+      <deleteTasks>${deleteTasks ? 'true' : 'false'}</deleteTasks>
+    </ser:deleteSubject>
+  </soap:Body>
+</soap:Envelope>
+''';
+
+    final response = await _sendRequest(envelope);
+    final document = _parseResponse(response);
+
+    final result = _findElement(document, 'return');
+
+    if (result == null) {
+      throw Exception('Invalid response from SubjectService.');
+    }
+
+    _checkSuccess(result);
+  }
+
   static Future<http.Response> _sendRequest(String envelope) async {
     final response = await http
         .post(

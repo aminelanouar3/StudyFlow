@@ -138,9 +138,128 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            e.toString().replaceFirst('Exception: ', ''),
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showDeleteSubjectDialog(Subject subject) async {
+    final deleteTasks = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Subject'),
+        content: Text(
+          'What should happen to the tasks associated with '
+          '"${subject.name}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
           ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep tasks'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete all'),
+          ),
+        ],
+      ),
+    );
+
+    if (deleteTasks == null || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm deletion'),
+        content: Text(
+          deleteTasks
+              ? 'Delete "${subject.name}" and all its associated tasks? '
+                  'This action cannot be undone.'
+              : 'Delete "${subject.name}" but preserve its tasks? '
+                  'The tasks will no longer be associated with this subject.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Confirm deletion'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    await _deleteSubject(
+      subject,
+      deleteTasks: deleteTasks,
+    );
+  }
+
+  Future<void> _deleteSubject(
+    Subject subject, {
+    required bool deleteTasks,
+  }) async {
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final token = await SessionService.getToken();
+
+      if (token == null || token.isEmpty) {
+        throw Exception('Your session has expired. Please sign in again.');
+      }
+
+      await SubjectService.deleteSubject(
+        token: token,
+        subjectId: subject.id.toString(),
+        deleteTasks: deleteTasks,
+      );
+
+      if (!mounted) return;
+
+      await _loadSubjects(showLoader: false);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            deleteTasks
+                ? 'Subject and associated tasks deleted.'
+                : 'Subject deleted. Its tasks were preserved.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -215,7 +334,8 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    '${_subjects.length} ${_subjects.length == 1 ? 'subject' : 'subjects'}',
+                    '${_subjects.length} '
+                    '${_subjects.length == 1 ? 'subject' : 'subjects'}',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -359,6 +479,16 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                         : () => _showEditSubjectDialog(subject),
                     icon: const Icon(Icons.edit_outlined),
                   ),
+                  IconButton(
+                    tooltip: 'Delete subject',
+                    onPressed: _isSaving
+                        ? null
+                        : () => _showDeleteSubjectDialog(subject),
+                    icon: Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -449,11 +579,9 @@ class _SubjectFormDialogState extends State<_SubjectFormDialog> {
       return _colors.first;
     }
 
-    final color = Color(
+    return Color(
       hex.length <= 6 ? parsed | 0xFF000000 : parsed,
     );
-
-    return color;
   }
 
   @override
