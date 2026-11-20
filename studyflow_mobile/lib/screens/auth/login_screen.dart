@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 
 import '../../widgets/custom_text_field.dart';
@@ -44,18 +43,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (response.success) {
         if (response.token != null) {
-        await SessionManager.saveToken(response.token!);
+          await SessionManager.saveToken(response.token!);
         }
+
+        if (!mounted) return;
+
         Navigator.pushReplacementNamed(
-        context,
-        AppRoutes.home,
-        arguments: response,
+          context,
+          AppRoutes.home,
+          arguments: response,
         );
-        } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(response.message)),
-            );
-        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(response.message)),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
 

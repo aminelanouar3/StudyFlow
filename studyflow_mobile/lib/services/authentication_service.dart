@@ -159,4 +159,54 @@ class AuthenticationService {
       'token': token,
     });
   }
+
+    // CHANGE PASSWORD
+  static Future<AuthResponse> changePassword({
+    required String token,
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _send('changePassword', {
+      'token': token,
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+  }
+
+    // CHANGE FULL NAME
+  static Future<AuthResponse> changeFullName({
+    required String token,
+    required String currentPassword,
+    required String newFullName,
+  }) {
+    return _send('changeFullName', {
+      'token': token,
+      'currentPassword': currentPassword,
+      'newFullName': newFullName,
+    });
+  }
+
+  // REQUEST EMAIL CHANGE
+  static Future<AuthResponse> requestEmailChange({
+    required String token,
+    required String currentPassword,
+    required String newEmail,
+  }) {
+    return _send('requestEmailChange', {
+      'token': token,
+      'currentPassword': currentPassword,
+      'newEmail': newEmail,
+    });
+  }
+
+  // VERIFY EMAIL CHANGE
+  static Future<AuthResponse> verifyEmailChange({
+    required String token,
+    required String code,
+  }) {
+    return _send('verifyEmailChange', {
+      'token': token,
+      'code': code,
+    });
+  }
 }

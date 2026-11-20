@@ -249,6 +249,85 @@ public class TaskService {
         }
     }
 
+
+    // =========================================================
+    // GET TASKS BY SUBJECT ID
+    // =========================================================
+
+    @WebMethod(operationName = "getTasksBySubjectId")
+    public TaskListResponse getTasksBySubjectId(
+            @WebParam(name = "token") String token,
+            @WebParam(name = "subjectId") String subjectId) {
+
+        if (!isValidToken(token)) {
+            return taskListFailure("Authentication token is required.");
+        }
+
+        Integer parsedSubjectId = parseOptionalId(subjectId);
+
+        if (parsedSubjectId == null) {
+            return taskListFailure("Invalid subject ID.");
+        }
+
+        List<TaskDTO> tasks = new ArrayList<>();
+
+        try (Connection connection = DatabaseConnection.getConnection()) {
+
+            int userId = authenticateUser(connection, token);
+
+            if (userId == -1) {
+                return taskListFailure(
+                        "Invalid or expired authentication token.");
+            }
+
+            if (!subjectBelongsToUser(
+                    connection, parsedSubjectId, userId)) {
+                return taskListFailure(
+                        "Subject not found or does not belong to this user.");
+            }
+
+            String sql =
+                    "SELECT id, subject_id, title, description, "
+                            + "due_date, priority, status, created_at "
+                            + "FROM tasks "
+                            + "WHERE user_id = ? AND subject_id = ? "
+                            + "ORDER BY created_at DESC, id DESC";
+
+            try (PreparedStatement statement =
+                         connection.prepareStatement(sql)) {
+
+                statement.setInt(1, userId);
+                statement.setInt(2, parsedSubjectId);
+
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        tasks.add(mapTask(resultSet));
+                    }
+                }
+            }
+
+            return new TaskListResponse(
+                    true, "Tasks retrieved successfully.", tasks);
+
+        } catch (SQLException e) {
+            LOGGER.log(
+                    Level.SEVERE,
+                    "Database error in getTasksBySubjectId", e);
+
+            return taskListFailure(
+                    "A database error occurred while retrieving tasks.");
+
+        } catch (Exception e) {
+            LOGGER.log(
+                    Level.SEVERE,
+                    "Unexpected error in getTasksBySubjectId", e);
+
+            return taskListFailure(
+                    "An unexpected error occurred while retrieving tasks.");
+        }
+    }
+
+
     // =========================================================
     // GET ONE TASK
     // =========================================================

@@ -1,11 +1,10 @@
-
 import 'package:flutter/material.dart';
 
 import '../models/auth_response.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/register_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
-import '../screens/home/home_screen.dart';
+import '../screens/main_navigation_screen.dart';
 import '../services/session_manager.dart';
 import 'routes.dart';
 
@@ -34,7 +33,7 @@ class StudyFlowApp extends StatelessWidget {
 
         if (user is AuthResponse) {
           return MaterialPageRoute(
-            builder: (_) => HomeScreen(user: user),
+            builder: (_) => MainNavigationScreen(user: user),
           );
         }
 
@@ -62,12 +61,7 @@ class StudyFlowApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF8F8FC),
         fontFamily: 'Roboto',
       ),
-
-      // SessionGate decides whether to show Login or Home.
       home: const SessionGate(),
-
-      // Named navigation is handled here.
-      // No routes table containing "/" is necessary.
       onGenerateRoute: _generateRoute,
     );
   }
@@ -105,7 +99,7 @@ class _SessionGateState extends State<SessionGate> {
         final user = snapshot.data;
 
         if (user != null && user.success) {
-          return HomeScreen(user: user);
+          return MainNavigationScreen(user: user);
         }
 
         return const LoginScreen();
