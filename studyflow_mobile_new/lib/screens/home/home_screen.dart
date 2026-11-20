@@ -5,8 +5,12 @@ import '../../services/authentication_service.dart';
 import '../../services/session_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_dimensions.dart';
-import '../../widgets/app_button.dart';
+import '../../widgets/app_bottom_navigation_bar.dart';
+
 import '../auth/login_screen.dart';
+import '../subjects/subjects_screen.dart';
+import '../tasks/tasks_screen.dart';
+import '../profile/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,7 +20,28 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  int _currentIndex = 0;
   bool _isLoggingOut = false;
+
+  final List<Widget> _screens = const [
+    _HomeContent(),
+    SubjectsScreen(),
+    TasksScreen(),
+    ProfileScreen(),
+  ];
+
+  final List<String> _titles = const [
+    'StudyFlow',
+    'My Subjects',
+    'My Tasks',
+    'My Profile',
+  ];
+
+  void _onTabSelected(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
 
   Future<void> _logout() async {
     if (_isLoggingOut) return;
@@ -24,15 +49,12 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _isLoggingOut = true);
 
     try {
-      // Read the token before clearing the local session.
       final token = await SessionService.getToken();
 
-      // Clear local authentication immediately.
       await SessionService.clearSession();
 
       if (!mounted) return;
 
-      // Navigate without waiting for the server.
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => const LoginScreen(),
@@ -40,14 +62,13 @@ class _HomeScreenState extends State<HomeScreen> {
         (route) => false,
       );
 
-      // Notify the backend without blocking navigation.
       if (token != null && token.isNotEmpty) {
         AuthenticationService.logout(token: token).then(
-  (_) {},
-  onError: (Object error) {
-    debugPrint('Backend logout failed: $error');
-  },
-);
+          (_) {},
+          onError: (Object error) {
+            debugPrint('Backend logout failed: $error');
+          },
+        );
       }
     } catch (e) {
       debugPrint('Local logout failed: $e');
@@ -62,7 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('StudyFlow'),
+        title: Text(_titles[_currentIndex]),
         actions: [
           IconButton(
             tooltip: 'Sign out',
@@ -72,53 +93,61 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(
-            AppDimensions.screenPadding,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 76,
-                height: 76,
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(
-                    AppDimensions.radiusLarge,
-                  ),
-                ),
-                child: const Icon(
-                  Icons.school_rounded,
-                  color: Colors.white,
-                  size: 40,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'You are signed in!',
-                style: Theme.of(context).textTheme.headlineLarge,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Your StudyFlow dashboard will be here.',
-                style: Theme.of(context).textTheme.bodyLarge,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              AppButton(
-                text: 'Sign out',
-                icon: Icons.logout_rounded,
-                isLoading: _isLoggingOut,
-                onPressed: _logout,
-              ),
-            ],
-          ),
-        ),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
+      bottomNavigationBar: AppBottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: _onTabSelected,
       ),
     );
   }
 }
 
+class _HomeContent extends StatelessWidget {
+  const _HomeContent();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(
+          AppDimensions.screenPadding,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(
+                  AppDimensions.radiusLarge,
+                ),
+              ),
+              child: const Icon(
+                Icons.school_rounded,
+                color: Colors.white,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'You are signed in!',
+              style: Theme.of(context).textTheme.headlineLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Your StudyFlow dashboard will be here.',
+              style: Theme.of(context).textTheme.bodyLarge,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
