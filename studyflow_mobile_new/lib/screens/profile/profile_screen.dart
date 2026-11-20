@@ -109,6 +109,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<List<String>?> _showChangePasswordDialog() {
+    return showDialog<List<String>>(
+      context: context,
+      builder: (_) => const _ChangePasswordDialog(),
+    );
+  }
+
   Future<void> _editFullName() async {
     final result = await _showEditDialog(
       title: 'Change full name',
@@ -250,6 +257,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _changePassword() async {
+    final result = await _showChangePasswordDialog();
+
+    if (!mounted || result == null) return;
+
+    final currentPassword = result[0];
+    final newPassword = result[1];
+    final confirmPassword = result[2];
+
+    if (currentPassword.isEmpty ||
+        newPassword.isEmpty ||
+        confirmPassword.isEmpty) {
+      _showMessage('Please complete all password fields.');
+      return;
+    }
+
+    if (newPassword != confirmPassword) {
+      _showMessage('The new passwords do not match.');
+      return;
+    }
+
+    if (currentPassword == newPassword) {
+      _showMessage('Your new password must be different.');
+      return;
+    }
+
+    setState(() => _isUpdating = true);
+
+    try {
+      final token = await _getToken();
+
+      final response = await AuthenticationService.changePassword(
+        token: token,
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+
+      if (!response.success) {
+        throw Exception(response.message ?? 'Unable to change password.');
+      }
+
+      if (mounted) {
+        _showMessage('Your password was changed successfully.');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage(e.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdating = false);
+      }
+    }
+  }
+
   Widget _buildInformationTile({
     required String title,
     required String value,
@@ -356,6 +418,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 36),
+
               Text(
                 'Personal Information',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -383,6 +446,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 ),
               ),
+
+              const SizedBox(height: 28),
+
+              Text(
+                'Security',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  leading: const Icon(
+                    Icons.lock_outline,
+                    color: AppColors.primary,
+                  ),
+                  title: const Text(
+                    'Change Password',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('Update your account password'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _isUpdating ? null : _changePassword,
+                ),
+              ),
             ],
           ),
         ),
@@ -400,7 +493,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-// Owns and disposes its controllers after the dialog is removed.
 class _EditInformationDialog extends StatefulWidget {
   final String title;
   final String fieldLabel;
@@ -483,7 +575,6 @@ class _EditInformationDialogState extends State<_EditInformationDialog> {
   }
 }
 
-// Owns and disposes the verification controller.
 class _VerificationCodeDialog extends StatefulWidget {
   const _VerificationCodeDialog();
 
@@ -530,6 +621,150 @@ class _VerificationCodeDialogState extends State<_VerificationCodeDialog> {
             Navigator.pop(context, _codeController.text.trim());
           },
           child: const Text('Verify'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  State<_ChangePasswordDialog> createState() =>
+      _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _formKey = GlobalKey<FormState>();
+
+  late final TextEditingController _currentController;
+  late final TextEditingController _newController;
+  late final TextEditingController _confirmController;
+
+  bool _hideCurrent = true;
+  bool _hideNew = true;
+  bool _hideConfirm = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentController = TextEditingController();
+    _newController = TextEditingController();
+    _confirmController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _currentController.dispose();
+    _newController.dispose();
+    _confirmController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildPasswordField({
+    required String label,
+    required TextEditingController controller,
+    required bool obscureText,
+    required VoidCallback onToggleVisibility,
+    String? Function(String?)? validator,
+  }) {
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      validator: validator ??
+          (value) {
+            if (value == null || value.isEmpty) {
+              return 'Please enter $label.';
+            }
+            return null;
+          },
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        suffixIcon: IconButton(
+          onPressed: onToggleVisibility,
+          icon: Icon(
+            obscureText ? Icons.visibility_off : Icons.visibility,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      title: const Text('Change Password'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildPasswordField(
+              label: 'Current password',
+              controller: _currentController,
+              obscureText: _hideCurrent,
+              onToggleVisibility: () {
+                setState(() => _hideCurrent = !_hideCurrent);
+              },
+            ),
+            const SizedBox(height: 16),
+            _buildPasswordField(
+              label: 'New password',
+              controller: _newController,
+              obscureText: _hideNew,
+              onToggleVisibility: () {
+                setState(() => _hideNew = !_hideNew);
+              },
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter a new password.';
+                }
+                if (value.length < 8) {
+                  return 'Password must contain at least 8 characters.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            _buildPasswordField(
+              label: 'Confirm new password',
+              controller: _confirmController,
+              obscureText: _hideConfirm,
+              onToggleVisibility: () {
+                setState(() => _hideConfirm = !_hideConfirm);
+              },
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please confirm your new password.';
+                }
+                if (value != _newController.text) {
+                  return 'Passwords do not match.';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+
+            Navigator.pop(context, [
+              _currentController.text,
+              _newController.text,
+              _confirmController.text,
+            ]);
+          },
+          child: const Text('Save Changes'),
         ),
       ],
     );
