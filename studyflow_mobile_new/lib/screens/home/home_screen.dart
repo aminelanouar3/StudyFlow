@@ -6,7 +6,6 @@ import '../../services/session_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_dimensions.dart';
 import '../../widgets/app_bottom_navigation_bar.dart';
-
 import '../auth/login_screen.dart';
 import '../subjects/subjects_screen.dart';
 import '../tasks/tasks_screen.dart';
@@ -28,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
     SubjectsScreen(),
     TasksScreen(),
     ProfileScreen(),
+    TasksScreen(),
   ];
 
   final List<String> _titles = const [

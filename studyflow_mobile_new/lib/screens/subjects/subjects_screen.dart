@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../models/subject.dart';
 import '../../services/session_service.dart';
 import '../../services/subject_service.dart';
+import '../tasks/tasks_screen.dart';
 
 class SubjectsScreen extends StatefulWidget {
   const SubjectsScreen({super.key});
@@ -57,6 +58,14 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  void _openSubjectTasks(Subject subject) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TasksScreen(subject: subject),
+      ),
+    );
   }
 
   Future<void> _showCreateSubjectDialog() async {
@@ -211,10 +220,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    await _deleteSubject(
-      subject,
-      deleteTasks: deleteTasks,
-    );
+    await _deleteSubject(subject, deleteTasks: deleteTasks);
   }
 
   Future<void> _deleteSubject(
@@ -289,9 +295,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
       return Theme.of(context).colorScheme.primary;
     }
 
-    return Color(
-      hex.length <= 6 ? parsed | 0xFF000000 : parsed,
-    );
+    return Color(hex.length <= 6 ? parsed | 0xFF000000 : parsed);
   }
 
   @override
@@ -315,32 +319,13 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'My Subjects',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Organize and manage your study subjects.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    '${_subjects.length} '
-                    '${_subjects.length == 1 ? 'subject' : 'subjects'}',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              child: Text(
+                '${_subjects.length} '
+                '${_subjects.length == 1 ? 'subject' : 'subjects'}',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             Expanded(child: _buildContent()),
@@ -426,70 +411,83 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => _openSubjectTasks(subject),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.menu_book_rounded,
+                        color: color,
+                      ),
                     ),
-                    child: Icon(
-                      Icons.menu_book_rounded,
-                      color: color,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          subject.name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            subject.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
                           ),
-                        ),
-                        if (subject.description != null &&
-                            subject.description!.isNotEmpty) ...[
+                          if (subject.description != null &&
+                              subject.description!.isNotEmpty) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              subject.description!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 5),
                           Text(
-                            subject.description!,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            'View tasks',
                             style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                              fontSize: 13,
+                              color: Theme.of(context).colorScheme.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Edit subject',
-                    onPressed: _isSaving
-                        ? null
-                        : () => _showEditSubjectDialog(subject),
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Delete subject',
-                    onPressed: _isSaving
-                        ? null
-                        : () => _showDeleteSubjectDialog(subject),
-                    icon: Icon(
-                      Icons.delete_outline,
-                      color: Theme.of(context).colorScheme.error,
+                    IconButton(
+                      tooltip: 'Edit subject',
+                      onPressed: _isSaving
+                          ? null
+                          : () => _showEditSubjectDialog(subject),
+                      icon: const Icon(Icons.edit_outlined),
                     ),
-                  ),
-                ],
+                    IconButton(
+                      tooltip: 'Delete subject',
+                      onPressed: _isSaving
+                          ? null
+                          : () => _showDeleteSubjectDialog(subject),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -579,9 +577,7 @@ class _SubjectFormDialogState extends State<_SubjectFormDialog> {
       return _colors.first;
     }
 
-    return Color(
-      hex.length <= 6 ? parsed | 0xFF000000 : parsed,
-    );
+    return Color(hex.length <= 6 ? parsed | 0xFF000000 : parsed);
   }
 
   @override
