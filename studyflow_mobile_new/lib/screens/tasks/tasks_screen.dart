@@ -302,7 +302,8 @@ class _TasksScreenState extends State<TasksScreen> {
     return '${date.year}-'
         '${twoDigits(date.month)}-'
         '${twoDigits(date.day)} '
-        '00:00:00';
+        '${twoDigits(date.hour)}:'
+        '${twoDigits(date.minute)}:00';
   }
 
   String _formatDate(DateTime date) {
@@ -311,6 +312,12 @@ class _TasksScreenState extends State<TasksScreen> {
     return '${twoDigits(date.day)}/'
         '${twoDigits(date.month)}/'
         '${date.year}';
+  }
+
+  String _formatTime(DateTime date) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+
+    return '${twoDigits(date.hour)}:${twoDigits(date.minute)}';
   }
 
   String _subjectName(int? subjectId) {
@@ -423,6 +430,10 @@ class _TasksScreenState extends State<TasksScreen> {
     final priorityColor = _priorityColor(task.priority);
     final dueDate = task.parsedDueDate;
 
+    final isOverdue = dueDate != null &&
+        dueDate.isBefore(DateTime.now()) &&
+        task.status != 'DONE';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
@@ -514,6 +525,18 @@ class _TasksScreenState extends State<TasksScreen> {
                   _TaskTag(
                     icon: Icons.calendar_today_outlined,
                     label: _formatDate(dueDate),
+                  ),
+                if (dueDate != null)
+                  _TaskTag(
+                    icon: Icons.access_time,
+                    label: _formatTime(dueDate),
+                    color: isOverdue ? Colors.red : null,
+                  ),
+                if (isOverdue)
+                  const _TaskTag(
+                    icon: Icons.warning_amber_rounded,
+                    label: 'Overdue',
+                    color: Colors.red,
                   ),
               ],
             ),
@@ -856,7 +879,44 @@ class _TaskFormDialogState extends State<_TaskFormDialog> {
     if (selected == null || !mounted) return;
 
     setState(() {
-      _dueDate = selected;
+      final current = _dueDate ?? DateTime.now();
+
+      _dueDate = DateTime(
+        selected.year,
+        selected.month,
+        selected.day,
+        current.hour,
+        current.minute,
+      );
+    });
+  }
+
+  Future<void> _pickTime() async {
+    if (_dueDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please choose a deadline date first.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_dueDate!),
+    );
+
+    if (selected == null || !mounted) return;
+
+    setState(() {
+      _dueDate = DateTime(
+        _dueDate!.year,
+        _dueDate!.month,
+        _dueDate!.day,
+        selected.hour,
+        selected.minute,
+      );
     });
   }
 
@@ -866,6 +926,12 @@ class _TaskFormDialogState extends State<_TaskFormDialog> {
     return '${twoDigits(date.day)}/'
         '${twoDigits(date.month)}/'
         '${date.year}';
+  }
+
+  String _formatTime(DateTime date) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+
+    return '${twoDigits(date.hour)}:${twoDigits(date.minute)}';
   }
 
   String _statusName(String status) {
@@ -1034,6 +1100,18 @@ class _TaskFormDialogState extends State<_TaskFormDialog> {
                         _dueDate == null
                             ? 'Choose date'
                             : _formatDate(_dueDate!),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _dueDate == null ? null : _pickTime,
+                      icon: const Icon(Icons.access_time),
+                      label: Text(
+                        _dueDate == null
+                            ? 'Choose time'
+                            : _formatTime(_dueDate!),
                       ),
                     ),
                   ),

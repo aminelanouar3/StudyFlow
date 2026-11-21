@@ -468,15 +468,47 @@ class _DashboardTaskCard extends StatelessWidget {
     required this.task,
   });
 
+  String _formatDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+
+    return '$day/$month/${date.year}';
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+
+    return '$hour:$minute';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final dueDate = task.parsedDueDate;
+    final rawDueDate = task.dueDate;
+
+    final dueDate = rawDueDate == null || rawDueDate.isEmpty
+        ? null
+        : DateTime.tryParse(rawDueDate.replaceFirst(' ', 'T'));
+
+    final isOverdue = dueDate != null &&
+        dueDate.isBefore(DateTime.now()) &&
+        (task.status ?? '').toUpperCase() != 'DONE';
+
+    final status = (task.status ?? 'UNKNOWN').replaceAll('_', ' ');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
-        leading: const CircleAvatar(
-          child: Icon(Icons.assignment_outlined),
+        leading: CircleAvatar(
+          backgroundColor: isOverdue
+              ? Colors.red.withValues(alpha: 0.10)
+              : null,
+          child: Icon(
+            isOverdue
+                ? Icons.warning_amber_rounded
+                : Icons.assignment_outlined,
+            color: isOverdue ? Colors.red : null,
+          ),
         ),
         title: Text(
           task.title ?? 'Untitled task',
@@ -486,17 +518,53 @@ class _DashboardTaskCard extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (dueDate != null)
-              Text(
-                'Due: ${dueDate.day.toString().padLeft(2, '0')}/'
-                '${dueDate.month.toString().padLeft(2, '0')}/'
-                '${dueDate.year}',
+            if (dueDate != null) ...[
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_today_rounded,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(_formatDate(dueDate)),
+                  const SizedBox(width: 12),
+                  const Icon(
+                    Icons.access_time_rounded,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(_formatTime(dueDate)),
+                ],
               ),
+            ],
+            const SizedBox(height: 5),
             Text(
-'${task.priority ?? 'No priority'} • ${(task.status ?? 'UNKNOWN').replaceAll('_', ' ')}',            ),
+              '${task.priority ?? 'No priority'} • $status',
+            ),
+            if (isOverdue) ...[
+              const SizedBox(height: 5),
+              const Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 14,
+                    color: Colors.red,
+                  ),
+                  SizedBox(width: 5),
+                  Text(
+                    'Overdue',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
-        isThreeLine: dueDate != null,
+        isThreeLine: true,
       ),
     );
   }
