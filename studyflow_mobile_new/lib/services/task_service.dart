@@ -6,6 +6,8 @@ import 'package:xml/xml.dart';
 
 import '../config/api_config.dart';
 import '../models/task.dart';
+import 'task_notification_service.dart';
+import 'task_reminder_sync_service.dart';
 
 class TaskService {
   TaskService._();
@@ -19,6 +21,13 @@ class TaskService {
   static final Uri _endpoint = Uri.parse(
     '${ApiConfig.baseUrl}/studyflow-backend/TaskService',
   );
+
+  static final TaskNotificationService _notifications =
+      TaskNotificationService.instance;
+
+  // ---------------------------------------------------------------------------
+  // GET ALL TASKS
+  // ---------------------------------------------------------------------------
 
   static Future<List<StudyTask>> getTasks({
     required String token,
@@ -47,11 +56,19 @@ class TaskService {
 
     _checkSuccess(result);
 
-    return result.childElements
+    final tasks = result.childElements
         .where((element) => element.name.local == 'task')
         .map(StudyTask.fromXml)
         .toList();
+
+    await _safeSynchronizeTasks(tasks);
+
+    return tasks;
   }
+
+  // ---------------------------------------------------------------------------
+  // GET TASKS BY SUBJECT
+  // ---------------------------------------------------------------------------
 
   static Future<List<StudyTask>> getTasksBySubjectId({
     required String token,
@@ -68,7 +85,7 @@ class TaskService {
       <token>${_escapeXml(token)}</token>
       <subjectId>${_escapeXml(subjectId)}</subjectId>
     </ser:getTasksBySubjectId>
-  </soap:Body>
+  </ser:Body>
 </soap:Envelope>
 ''';
 
@@ -82,11 +99,19 @@ class TaskService {
 
     _checkSuccess(result);
 
-    return result.childElements
+    final tasks = result.childElements
         .where((element) => element.name.local == 'task')
         .map(StudyTask.fromXml)
         .toList();
+
+    await _safeSynchronizeTasks(tasks);
+
+    return tasks;
   }
+
+  // ---------------------------------------------------------------------------
+  // GET ONE TASK
+  // ---------------------------------------------------------------------------
 
   static Future<StudyTask> getTask({
     required String token,
@@ -123,8 +148,16 @@ class TaskService {
       throw Exception('Task not found in the response.');
     }
 
-    return StudyTask.fromXml(taskElement);
+    final task = StudyTask.fromXml(taskElement);
+
+    await _safeSynchronizeTasks([task]);
+
+    return task;
   }
+
+  // ---------------------------------------------------------------------------
+  // CREATE TASK
+  // ---------------------------------------------------------------------------
 
   static Future<void> createTask({
     required String token,
@@ -164,7 +197,36 @@ class TaskService {
     }
 
     _checkSuccess(result);
+
+    // Extract the generated ID if the backend returns it.
+    final createdTaskElement = _findElement(result, 'task');
+
+    String? createdTaskId;
+
+    if (createdTaskElement != null) {
+      final createdTask = StudyTask.fromXml(createdTaskElement);
+
+      if (createdTask.id > 0) {
+        createdTaskId = createdTask.id.toString();
+      }
+    }
+
+    createdTaskId ??= _getChildText(result, 'taskId');
+    createdTaskId ??= _getChildText(result, 'id');
+
+    if (createdTaskId != null && createdTaskId.trim().isNotEmpty) {
+      await _safeSynchronizeSingleTask(
+        taskId: createdTaskId,
+        title: title,
+        dueDate: dueDate,
+        status: status,
+      );
+    }
   }
+
+  // ---------------------------------------------------------------------------
+  // UPDATE TASK
+  // ---------------------------------------------------------------------------
 
   static Future<void> updateTask({
     required String token,
@@ -206,7 +268,18 @@ class TaskService {
     }
 
     _checkSuccess(result);
+
+    await _safeSynchronizeSingleTask(
+      taskId: taskId,
+      title: title,
+      dueDate: dueDate,
+      status: status,
+    );
   }
+
+  // ---------------------------------------------------------------------------
+  // DELETE TASK
+  // ---------------------------------------------------------------------------
 
   static Future<void> deleteTask({
     required String token,
@@ -236,7 +309,91 @@ class TaskService {
     }
 
     _checkSuccess(result);
+
+    try {
+      await _notifications.cancelTaskReminders(taskId);
+    } catch (_) {
+      // Notification failure must not undo a successful backend deletion.
+    }
   }
+
+  // ---------------------------------------------------------------------------
+  // SAFE NOTIFICATION SYNCHRONIZATION
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _safeSynchronizeTasks(
+    List<StudyTask> tasks,
+  ) async {
+    try {
+      await TaskReminderSyncService.synchronize(tasks);
+    } catch (_) {
+      // Task retrieval must not fail because of local notifications.
+    }
+  }
+
+  static Future<void> _safeSynchronizeSingleTask({
+    required String taskId,
+    required String title,
+    required String? dueDate,
+    required String status,
+  }) async {
+    try {
+      await _synchronizeTaskReminder(
+        taskId: taskId,
+        title: title,
+        dueDate: dueDate,
+        status: status,
+      );
+    } catch (_) {
+      // Backend task operations must remain successful.
+    }
+  }
+
+  static Future<void> _synchronizeTaskReminder({
+    required String taskId,
+    required String title,
+    required String? dueDate,
+    required String status,
+  }) async {
+    final normalizedStatus = status.trim().toUpperCase();
+
+    if (normalizedStatus == 'DONE' ||
+        normalizedStatus == 'COMPLETED') {
+      await _notifications.cancelTaskReminders(taskId);
+      return;
+    }
+
+    final deadline = _parseDeadline(dueDate);
+
+    if (deadline == null) {
+      await _notifications.cancelTaskReminders(taskId);
+      return;
+    }
+
+    await _notifications.scheduleTaskReminders(
+      taskId: taskId,
+      taskTitle: title,
+      deadline: deadline,
+    );
+  }
+
+  static DateTime? _parseDeadline(String? dueDate) {
+    if (dueDate == null || dueDate.trim().isEmpty) {
+      return null;
+    }
+
+    var normalized = dueDate.trim();
+
+    if (!normalized.contains('T')) {
+      normalized = normalized.replaceFirst(' ', 'T');
+    }
+
+    return DateTime.tryParse(normalized);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SOAP HTTP AND XML HELPERS
+  // ---------------------------------------------------------------------------
 
   static Future<http.Response> _sendRequest(String envelope) async {
     final response = await http
@@ -303,7 +460,8 @@ class TaskService {
   ) {
     for (final child in parent.childElements) {
       if (child.name.local == name) {
-        return child.innerText.trim();
+        final value = child.innerText.trim();
+        return value.isEmpty ? null : value;
       }
     }
 
