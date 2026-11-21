@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../models/subject.dart';
 import '../../services/session_service.dart';
 import '../../services/subject_service.dart';
-import '../tasks/tasks_screen.dart';
 
 class SubjectsScreen extends StatefulWidget {
   final ValueChanged<Subject> onSubjectSelected;
@@ -63,14 +62,6 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         _isLoading = false;
       });
     }
-  }
-
-  void _openSubjectTasks(Subject subject) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => TasksScreen(subject: subject),
-      ),
-    );
   }
 
   Future<void> _showCreateSubjectDialog() async {
