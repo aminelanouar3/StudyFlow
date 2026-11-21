@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../models/subject.dart';
 import '../../services/authentication_service.dart';
 import '../../services/session_service.dart';
 import '../../theme/app_colors.dart';
@@ -22,12 +23,15 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   bool _isLoggingOut = false;
 
-  final List<Widget> _screens = const [
-    _HomeContent(),
-    SubjectsScreen(),
-    TasksScreen(),
-    ProfileScreen(),
-    TasksScreen(),
+  Subject? _selectedSubject;
+
+  late final List<Widget> _screens = [
+    const _HomeContent(),
+    SubjectsScreen(
+      onSubjectSelected: _openSubjectTasks,
+    ),
+    const TasksScreen(),
+    const ProfileScreen(),
   ];
 
   final List<String> _titles = const [
@@ -40,6 +44,20 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onTabSelected(int index) {
     setState(() {
       _currentIndex = index;
+      _selectedSubject = null;
+    });
+  }
+
+  void _openSubjectTasks(Subject subject) {
+    setState(() {
+      _selectedSubject = subject;
+    });
+  }
+
+  void _closeSubjectTasks() {
+    setState(() {
+      _selectedSubject = null;
+      _currentIndex = 1;
     });
   }
 
@@ -81,9 +99,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isViewingSubjectTasks = _selectedSubject != null;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_currentIndex]),
+        leading: isViewingSubjectTasks
+            ? IconButton(
+                tooltip: 'Back to subjects',
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: _closeSubjectTasks,
+              )
+            : null,
+        title: Text(
+          isViewingSubjectTasks
+              ? _selectedSubject!.name
+              : _titles[_currentIndex],
+        ),
         actions: [
           IconButton(
             tooltip: 'Sign out',
@@ -93,10 +124,12 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
+      body: isViewingSubjectTasks
+          ? TasksScreen(subject: _selectedSubject!)
+          : IndexedStack(
+              index: _currentIndex,
+              children: _screens,
+            ),
       bottomNavigationBar: AppBottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: _onTabSelected,

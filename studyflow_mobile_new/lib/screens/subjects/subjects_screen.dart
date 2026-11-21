@@ -7,7 +7,12 @@ import '../../services/subject_service.dart';
 import '../tasks/tasks_screen.dart';
 
 class SubjectsScreen extends StatefulWidget {
-  const SubjectsScreen({super.key});
+  final ValueChanged<Subject> onSubjectSelected;
+
+  const SubjectsScreen({
+    super.key,
+    required this.onSubjectSelected,
+  });
 
   @override
   State<SubjectsScreen> createState() => _SubjectsScreenState();
@@ -413,8 +418,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
             ),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: () => _openSubjectTasks(subject),
-              child: Padding(
+onTap: () => widget.onSubjectSelected(subject),              child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
