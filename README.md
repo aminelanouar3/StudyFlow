@@ -159,9 +159,7 @@ StudyFlow/
 ├── studyFlow-backend/          # Backend Java et services SOAP
 │
 ├── studyflow-email-service/    # Microservice d'envoi d'e-mails
-│
-├── subject-service.wsdl        # Contrat du service SOAP
-├── subject-service.xsd         # Schéma XML
+│      
 │
 ├── screenshots/                # Captures d'écran de l'application
 │   ├── login.png
