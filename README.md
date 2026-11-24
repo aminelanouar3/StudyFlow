@@ -324,16 +324,3 @@ cd studyFlow-backend
 mvn clean package
 ```
 
-## Sécurité
-
-- Les fichiers `.env` ne doivent jamais être publiés sur GitHub.
-- Les mots de passe et les clés API doivent rester confidentiels.
-- Les identifiants de connexion à MySQL doivent être adaptés à l'environnement local.
-- L'adresse du backend doit correspondre à celle accessible depuis l'émulateur ou l'appareil mobile.
-
-## Auteur et contexte académique
-
-StudyFlow est un projet académique réalisé dans le cadre de la formation en Licence Technologies de l'Informatique, spécialité Développement des Systèmes d'Information (DSI).
-
-**Dépôt GitHub :**  
-https://github.com/aminelanouar3/StudyFlow
