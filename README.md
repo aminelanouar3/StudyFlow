@@ -20,7 +20,7 @@ Le projet repose sur une architecture orientée services (SOA), avec une applica
 - [Installation et configuration](#installation-et-configuration)
 - [Exécution du projet](#exécution-du-projet)
 - [Tests](#tests)
-- [Sécurité](#sécurité)
+
 
 ## Présentation du projet
 
